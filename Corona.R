@@ -1,15 +1,7 @@
 library(tidyverse)
-suppressPackageStartupMessages({
-  library(tidyverse)
-  library(lubridate)
-  library(gghighlight)
-  library(ggrepel)
-})
 library(lubridate)
-library(dplyr)
 library(rvest)
 library(stringdist)
-library(wbstats)
 
 # Function to read the raw CSV files. The files are aggregated to the country
 # level and then converted to long format
@@ -121,6 +113,11 @@ jh_covid19_data <- jh_covid19_data %>% left_join(jhd_countries) %>%
 
 # write_csv(jh_covid19_data, sprintf("jh_covid19_data_%s.csv", Sys.Date()))
 
+jh_covid19_data %>% filter(iso3c %in% "IND") %>% select(iso3c,date,confirmed) %>% ggplot() + geom_line(aes(date,confirmed))
+
+library(tidyverse)
+library(wbstats)
+
 pull_worldbank_data <- function(vars) {
   new_cache <- wbcache()
   all_vars <- as.character(unique(new_cache$indicators$indicatorID))
@@ -176,7 +173,7 @@ wb_data %>%
 
 # write_csv(wb_cs, "jh_add_wbank_data.csv")
 
-dta <- jh_covid19_data %>% mutate(date = ymd(date))
+dta <- jh_covid19_data %>% mutate(date = ymd(date()))
 
 # I define event time zero where, for a given country, the confirmed
 # cases match or exceed the Chinese case number at the beginning of the
@@ -206,7 +203,7 @@ lab_notes <- paste0(
   "Data as provided by Johns Hopkins University Center for Systems Science ", 
   "and Engineering (JHU CSSE)\nand obtained on March 23, 2020. ",
   "The sample is limited to countries with at least seven days of positive\n", 
-  "event days data."
+  "event days data. Code and walk-through: https://joachim-gassen.github.io."
 )
 
 lab_x_axis_confirmed <- sprintf(paste(
@@ -218,8 +215,8 @@ gg_my_blob <- list(
   scale_y_continuous(trans='log10', labels = scales::comma),  
   theme_minimal(), 
   theme(
-    #plot.title.position = "plot", 
-    #plot.caption.position =  "plot",
+    plot.title.position = "plot", 
+    plot.caption.position =  "plot",
     plot.caption = element_text(hjust = 0),
     axis.title.x = element_text(hjust = 1),
     axis.title.y = element_text(hjust = 1),
@@ -239,7 +236,7 @@ ggplot(df %>% filter (edate_confirmed <= 30),
   ) +
   gg_my_blob
 
-ggplot(df %>% filter (edate_confirmed >= 28 & edate_confirmed <= 30), 
+ggplot(df %>% filter (edate_confirmed <= 30), 
        aes(x = edate_confirmed, color = country, y = confirmed_1e5pop)) +
   geom_line() +
   gg_my_blob +
@@ -248,4 +245,30 @@ ggplot(df %>% filter (edate_confirmed >= 28 & edate_confirmed <= 30),
     title = "Cases relative to population\n"
   ) 
 
+ggplot(df %>% filter (country == c("US","United Kingdom","New Zealand","India","Ghana","Zambia","Zimbabwe")), 
+       aes(x = edate_confirmed, color = country, y = confirmed_1e5pop)) +
+  geom_line() +
+  gg_my_blob +
+  labs(
+    y = "Confirmed cases per 100,000 inhabitants",
+    title = "Cases relative to population\n"
+  ) 
+
+df_clean = na.omit(df)
+view(df_clean)
+
+set.seed(1, sample.kind = "Rounding")
+
+# WARNING: in set.seed(1, sample.kind = "Rounding"): non-uniform ’Rounding’ sampler used
+test_index <- createDataPartition(y = df_clean$income,
+                                  times = 1, p = 0.1, list = FALSE)
+edx <- df_clean[-test_index,]
+temp <- df_clean[test_index,]
+
+validation <- temp %>%
+  semi_join(edx, by = "iso3c") %>%
+  semi_join(edx, by = "confirmed_1e5pop")
+removed <- anti_join(temp, validation)
+
+edx <- rbind(edx, removed)
 

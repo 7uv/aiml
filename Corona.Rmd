@@ -283,7 +283,7 @@ gg_my_blob <- list(
 
 The base plot confirmed cases per 100,000 inhabitants generated for a representative sample of countries.
 ```{r filtered_plot}
-ggplot(df %>% filter (country == c("US","United Kingdom","France","Spain")), 
+ggplot(df %>% filter (country == c("US","United Kingdom","New Zealand","India","Ghana","Zambia","Zimbabwe")), 
        aes(x = edate_confirmed, color = country, y = confirmed_1e5pop)) +
   geom_line() +
   gg_my_blob +
@@ -313,7 +313,32 @@ validation <- temp %>%
 semi_join(edx, by = "iso3c") %>%
 semi_join(edx, by = "confirmed_1e5pop")
 removed <- anti_join(temp, validation)
-## Joining, by = c("userId", "movieId", "rating", "timestamp", "title", "genres")
-edx <- rbind(edx, removed)
 
+edx <- rbind(edx, removed)
 ```
+
+```{r purge_temp1}
+rm(test_index, temp, removed)
+```
+
+```{r seeding}
+set.seed(1, sample.kind="Rounding")
+test_index <- createDataPartition(y = edx$income, times = 1, p = 0.1, list = FALSE)
+train_set <- edx[-test_index,]
+temp <- edx[test_index,]
+
+test_set <- temp %>% 
+  semi_join(train_set, by="iso3c") %>% 
+  semi_join(train_set, by="confirmed_1e5pop")
+
+removed <- anti_join(temp, test_set)
+
+train_set <- anti_join(temp, removed)
+
+train_set <- rbind(train_set, removed)
+```
+
+```{r purge_temp2}
+rm(test_index, temp, removed)
+```
+
