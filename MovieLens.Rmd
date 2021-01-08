@@ -1,0 +1,666 @@
+---
+title: "Movielens"
+author: "Shriya"
+date: "2020/12/31"
+# output: html_document
+# runtime: shiny
+output: 
+  pdf_document:
+    toc: true
+    number_sections: true
+    fig_width: 7
+    fig_height: 6
+    fig_caption: true
+    df_print: kable
+    highlight: tango
+    keep_tex: true
+---
+
+# Introduction
+The goal of the Movielens dataset is to create an machine learning algorithm
+which predicts the ratings of the movies as compared to the actual ratings. It
+checks the accuracy of our algorithm to predict the movie ratings.
+
+### Rating prediction for movies on MovieLens dataset using caret package
+First we need to install all the packages and the files required to start with the prediction of the ratings of the Movielens dataset.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+if(!require(tidyverse))  
+  install.packages("tidyverse", repos = "http://cran.us.r-project.org") 
+if(!require(caret))  
+  install.packages("caret", repos = "http://cran.us.r-project.org") 
+if(!require(data.table))  
+  install.packages("data.table", repos = "http://cran.us.r-project.org") 
+if(!require(ggthemes))  
+  install.packages("ggthemes") 
+if(!require(scales))  
+  install.packages("scales")
+if(!require(recosystem))  
+  install.packages("recosystem", repos = "http://cran.us.r-project.org")
+if(!require(lubridate))  
+  install.packages("recosystem", repos = "http://cran.us.r-project.org")
+```
+
+# MovieLens 10M dataset: 
+Download the dataset from grouplens website.
+```{r dataset_download}
+dl <- tempfile() 
+download.file("http://files.grouplens.org/datasets/movielens/ml-10m.zip", dl)
+```
+
+# Ratings table with the columns UserId, MovieId, Rating and Timestamp 
+Movies table where the columns are shown separately with names of columns in Movies table showing Movies Table with MovieId, Title and Genres with Left join by MovieId in movielens dataset.
+```{r movie_ratings}
+ratings <- fread(text = gsub("::", "\t",  
+                             readLines(unzip(dl, "ml-10M100K/ratings.dat"))), 
+                 col.names = c("userId", "movieId", "rating", "timestamp")) 
+movies <- str_split_fixed(readLines(unzip(dl, "ml-10M100K/movies.dat")), "\\::", 3)
+colnames(movies) <- c("movieId", "title", "genres") 
+movies <- as.data.frame(movies) %>%  
+  mutate(movieId = as.numeric(levels(movieId))[movieId], 
+         title = as.character(title), 
+         genres = as.character(genres)) 
+movielens <- left_join(ratings, movies, by = "movieId") 
+```
+
+# 'Validation' 'Training' 'Testing' 
+__Validation Set__ will be 10% of MovieLens data. Then Separating the Training and Testing Dataset. 
+
+* Make sure userId and movieId in 'validation' set are also in 'edx' set.
+* Add rows removed from 'validation' set back into 'edx' set 
+```{r validation_set}
+set.seed(1, sample.kind="Rounding") 
+test_index <- createDataPartition(y = movielens$rating,  
+                                  times = 1, p = 0.1, list = FALSE) 
+
+edx <- movielens[-test_index,] 
+temp <- movielens[test_index,] 
+
+validation <- temp %>%  
+  semi_join(edx, by = "movieId") %>% 
+  semi_join(edx, by = "userId") 
+
+removed <- anti_join(temp, validation) 
+ 
+edx <- rbind(edx, removed) 
+```
+
+### Purge temp columns 
+After downloading the required packages and files, we will make the ratings and movies tables with some specific columns and then remove temporary datasets.
+```{r purge1}
+rm(dl, ratings, movies, test_index, temp, movielens, removed) 
+```
+
+#Machine Learning
+Adding the index for the Test Dataset. Then Training and Testing Dataset. Make sure userId and movieId in test set are also in train set. Add rows removed from test set back into train set.
+```{r ML}
+set.seed(1, sample.kind="Rounding") 
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.1, list = FALSE) 
+train_set <- edx[-test_index,]
+temp <- edx[test_index,] 
+
+test_set <- temp %>%  
+  semi_join(train_set, by = "movieId") %>% 
+  semi_join(train_set, by = "userId") 
+ 
+removed <- anti_join(temp, test_set) 
+train_set <- rbind(train_set, removed) 
+```
+
+### Purge temp columns 
+Removing temporary datasets.
+```{r purge2}
+rm(test_index, temp, removed) 
+```
+
+# Plot the histogram
+A Histogram is plotted called the Rating Distribution per year where Number of Ratings is plotted on the y-axis and the Year on the x-axis I.e it shows the ratings w.r.t year.
+```{r rating_distribution}
+edx %>% mutate(year = year(as_datetime(timestamp, origin="1970-01-01"))) %>% 
+  ggplot(aes(x=year)) + 
+    geom_histogram(color = "white") +  
+    ggtitle("Rating Distribution Per Year") + 
+    xlab("Year") + 
+    ylab("Number of Ratings") + 
+    scale_y_continuous(labels = comma) +  
+    theme_economist() 
+```
+
+It makes a table with the top 10 movies with maximum count dated after 1970-01-01.
+```{r edx}
+edx %>% mutate(date = date(as_datetime(timestamp, origin="1970-01-01"))) %>% 
+  group_by(date, title) %>% 
+  summarise(count = n()) %>% 
+  arrange(-count) %>% 
+  head(10) 
+```
+
+We make a table with the ratings and count of each rating.
+```{r ratings_table}
+edx %>% group_by(rating) %>% summarize(n=n()) 
+```
+
+A ratings distribution helps us visualise that higher ratings are prevalent.
+```{r filtered_rating_distribution}
+edx %>% group_by(rating) %>%  
+  summarise(count=n()) %>% 
+  ggplot(aes(x=rating, y=count)) +  
+    geom_line() + 
+    geom_point() + 
+    scale_y_log10(breaks = trans_breaks("log10", function(x) 10^x), 
+                labels = trans_format("log10", math_format(10^.x))) + 
+    ggtitle("Rating Distribution", subtitle = "Higher ratings are prevalent.") +  
+    xlab("Rating") + 
+ylab("Count") + 
+    theme_economist() 
+```
+
+We chart a plot of the movies distribution. Here we see that it is almost symmetric.
+```{r grouped_distribution}
+edx %>% group_by(movieId) %>% 
+  summarise(n=n()) %>% 
+  ggplot(aes(n)) + 
+    geom_histogram(color = "white") + 
+    scale_x_log10() +  
+    ggtitle("Distribution of Movies",  
+            subtitle = "The distribution is almost symetric.") + 
+    xlab("Number of Ratings") + 
+    ylab("Number of Movies") +  
+    theme_economist()
+```
+
+We'll group by user id to get a distribution of users vs ratings
+```{r edx_by_userid}
+edx %>% group_by(userId) %>% 
+  summarise(n=n()) %>% 
+  arrange(n) %>% 
+  head()
+```
+
+We can plot the graph to get a feel of how the whole thing looks.
+```{r hist_users}
+edx %>% group_by(userId) %>% 
+  summarise(n=n()) %>% 
+  ggplot(aes(n)) + 
+    geom_histogram(color = "white") + 
+    scale_x_log10() +  
+    ggtitle("Distribution of Users",  
+            subtitle="The distribution is right skewed.") + 
+    xlab("Number of Ratings") + 
+    ylab("Number of Users") +  
+    scale_y_continuous(labels = comma) +  
+    theme_economist() 
+```
+
+Then we clean the dataset.
+```{r user_clean}
+users <- sample(unique(edx$userId), 100) 
+ 
+edx %>% filter(userId %in% users) %>% 
+  select(userId, movieId, rating) %>% 
+  mutate(rating = 1) %>% 
+  spread(movieId, rating) %>%  
+  select(sample(ncol(.), 100)) %>%  
+  as.matrix() %>% t(.) %>% 
+  image(1:100, 1:100,. , xlab="Movies", ylab="Users") 
+ 
+abline(h=0:100+0.5, v=0:100+0.5, col = "grey") 
+ 
+title("User x Movie Matrix") 
+```
+
+# Train and Test set
+We will partition the dataset and then divide it into training and testing dataset, so that we can train the data and then test it. 
+```{r train_test_set}
+train_set <- train_set %>% select(userId, movieId, rating, title) 
+test_set  <- test_set  %>% select(userId, movieId, rating, title) 
+```
+
+# Errors
+Define Mean Absolute Error (MAE) 
+Define Mean Squared Error (MSE)
+Define Root Mean Squared Error (RMSE) 
+```{r errors}
+MAE <- function(true_ratings, predicted_ratings){ 
+  mean(abs(true_ratings - predicted_ratings)) 
+} 
+MSE <- function(true_ratings, predicted_ratings){ 
+  mean((true_ratings - predicted_ratings)^2) 
+} 
+ RMSE <- function(true_ratings, predicted_ratings){ 
+  sqrt(mean((true_ratings - predicted_ratings)^2)) 
+} 
+```
+
+# Probability estimation 
+Create the probability of each rating
+Estimate the probability of each rating with Monte Carlo simulation 
+After visualizing, training and testing, we will check the accuracy of our algorithm. We will compare our predicted ratings with the actual ratings.
+```{r prob}
+set.seed(4321, sample.kind = "Rounding") 
+p <- function(x, y) mean(y == x) 
+
+rating <- seq(0.5,5,0.5) 
+
+B <- 10^3 
+M <- replicate(B, { 
+  s <- sample(train_set$rating, 100, replace = TRUE) 
+  sapply(rating, p, y= s) 
+}) 
+prob <- sapply(1:nrow(M), function(x) mean(M[x,])) 
+ 
+```
+
+# RMSE
+Predict random ratings. Create a table with the error results 
+
+```{r RMSE}
+
+y_hat_random <- sample(rating, size = nrow(test_set),  
+                       replace = TRUE, prob = prob) 
+ 
+result <- tibble(Method = "Project Goal", RMSE = 0.8649, MSE = NA, MAE = NA) 
+result <- bind_rows(result,  
+                    tibble(Method = "Random prediction",  
+                           RMSE = RMSE(test_set$rating, y_hat_random), 
+                           MSE  = MSE(test_set$rating, y_hat_random), 
+                           MAE  = MAE(test_set$rating, y_hat_random))) 
+
+result 
+
+```
+
+Then we calculate the mean of observed values.
+```{r mean_set}
+# Mean of observed values 
+mu <- mean(train_set$rating) 
+
+# Update the error table   
+result <- bind_rows(result,  
+                    tibble(Method = "Mean",  
+                           RMSE = RMSE(test_set$rating, mu), 
+                           MSE  = MSE(test_set$rating, mu), 
+                           MAE  = MAE(test_set$rating, mu))) 
+
+# Show the RMSE improvement   
+result 
+```
+
+# Movie effects (bi) 
+We make a table of the top 6 movieId with their average ratings 
+```{r bi}
+bi <- train_set %>%  
+  group_by(movieId) %>%  
+  summarize(b_i = mean(rating - mu)) 
+head(bi) 
+```
+
+Plotting a histogram with the movie distribution having count in the y-axis and the movie effect on the x-axis. 
+```{r bi_plot}
+bi %>% ggplot(aes(x = b_i)) +  
+  geom_histogram(bins=10, col = I("black")) + 
+  ggtitle("Movie Effect Distribution") + 
+  xlab("Movie effect") + 
+  ylab("Count") + 
+  scale_y_continuous(labels = comma) +  
+  theme_economist() 
+```
+
+# RMSE calculation
+Predict the rating with mean + bi and then calculate the RMSE.   
+```{r bi_rating}
+y_hat_bi <- mu + test_set %>%  
+  left_join(bi, by = "movieId") %>%  
+  .$b_i 
+ 
+# Calculate the RMSE   
+result <- bind_rows(result,  
+                    tibble(Method = "Mean + bi",  
+                           RMSE = RMSE(test_set$rating, y_hat_bi), 
+                           MSE  = MSE(test_set$rating, y_hat_bi), 
+                           MAE  = MAE(test_set$rating, y_hat_bi))) 
+ 
+# Show the RMSE improvement   
+result 
+```
+
+# Actual prediction
+Probability determination that each ratings will appear in the Movielens dataset and subsequent prediction.
+```{r user_pred}
+# User effect (bu) 
+bu <- train_set %>%  
+  left_join(bi, by = 'movieId') %>% 
+  group_by(userId) %>% 
+  summarize(b_u = mean(rating - mu - b_i)) 
+ 
+# Prediction 
+y_hat_bi_bu <- test_set %>%  
+  left_join(bi, by='movieId') %>% 
+  left_join(bu, by='userId') %>% 
+  mutate(pred = mu + b_i + b_u) %>% 
+  .$pred 
+ 
+# Update the results table 
+result <- bind_rows(result,  
+                    tibble(Method = "Mean + bi + bu",  
+                           RMSE = RMSE(test_set$rating, y_hat_bi_bu), 
+                           MSE  = MSE(test_set$rating, y_hat_bi_bu), 
+                           MAE  = MAE(test_set$rating, y_hat_bi_bu))) 
+ 
+# Show the RMSE improvement   
+result 
+```
+
+# User distribution 
+Plotting a histogram showing the user distribution 
+```{r user_dist}
+train_set %>%  
+  group_by(userId) %>%  
+  summarize(b_u = mean(rating)) %>%  
+  filter(n()>=100) %>% 
+  ggplot(aes(b_u)) +  
+    geom_histogram(color = "black") +  
+    ggtitle("User Effect Distribution") + 
+    xlab("User Bias") + 
+    ylab("Count") + 
+    scale_y_continuous(labels = comma) +  
+    theme_economist() 
+```
+
+It makes a table with top 10 data with the coumns UserId, movieId, rating, title, b_i and residual 
+```{r train_set_final}
+train_set %>%  
+  left_join(bi, by='movieId') %>% 
+  mutate(residual = rating - (mu + b_i)) %>% 
+  arrange(desc(abs(residual))) %>%   
+  slice(1:10) 
+
+# It shows the data of the MovieId and Title separately 
+titles <- train_set %>%  
+  select(movieId, title) %>%  
+  distinct() 
+
+# It shows the top 6 titles 
+bi %>%  
+  inner_join(titles, by = "movieId") %>%  
+  arrange(-b_i) %>%  
+  select(title) %>% 
+  head() 
+
+```
+
+A table with the top 10 movies with their titles and count 
+```{r bi_table}
+# It shows top 6 titles 
+bi %>%  
+  inner_join(titles, by = "movieId") %>%  
+  arrange(b_i) %>%  
+  select(title) %>% 
+  head() 
+```
+
+# Lambda Tuning
+Calculate, tune and plot lambda parameters.
+```{r lambda}
+train_set %>%  
+  left_join(bi, by = "movieId") %>% 
+  arrange(desc(b_i)) %>%  
+  group_by(title) %>%  
+  summarise(n = n()) %>%  
+  slice(1:10) 
+
+# Selects columns into vector 
+train_set %>% count(movieId) %>%  
+  left_join(bi, by="movieId") %>%  
+  arrange(desc(b_i)) %>%  
+  slice(1:10) %>%  
+  pull(n) 
+
+regularization <- function(lambda, trainset, testset){ 
+  # Mean 
+  mu <- mean(trainset$rating) 
+ 
+  # Movie effect (bi) 
+  b_i <- trainset %>%  
+    group_by(movieId) %>% 
+    summarize(b_i = sum(rating - mu)/(n()+lambda)) 
+ 
+  # User effect (bu)   
+  b_u <- trainset %>%  
+    left_join(b_i, by="movieId") %>% 
+    filter(!is.na(b_i)) %>% 
+    group_by(userId) %>% 
+    summarize(b_u = sum(rating - b_i - mu)/(n()+lambda)) 
+ 
+  # Prediction: mu + bi + bu   
+  predicted_ratings <- testset %>%  
+    left_join(b_i, by = "movieId") %>% 
+    left_join(b_u, by = "userId") %>% 
+    filter(!is.na(b_i), !is.na(b_u)) %>% 
+    mutate(pred = mu + b_i + b_u) %>% 
+    pull(pred) 
+   
+  return(RMSE(predicted_ratings, testset$rating)) 
+} 
+ 
+# Define a set of lambdas to tune 
+lambdas <- seq(0, 10, 0.25) 
+ 
+# Tune lambda 
+rmses <- sapply(lambdas,  
+                regularization,  
+                trainset = train_set,  
+                testset = test_set) 
+ 
+# Plot the lambda vs RMSE 
+tibble(Lambda = lambdas, RMSE = rmses) %>% 
+  ggplot(aes(x = Lambda, y = RMSE)) + 
+    geom_point() + 
+    ggtitle("Regularization",  
+            subtitle = "Pick the penalization that gives the lowest RMSE.") + 
+    theme_economist() 
+```
+
+We pick the lambda that returns the lowest RMSE. Then, we calculate the predicted rating using the best parameters achieved from regularization. We can observe that Regularization made a small improvement in RMSE.   
+```{r lambda_rmse}
+lambda <- lambdas[which.min(rmses)] 
+mu <- mean(train_set$rating) 
+ 
+# Movie effect (bi) 
+b_i <- train_set %>%  
+  group_by(movieId) %>% 
+  summarize(b_i = sum(rating - mu)/(n()+lambda)) 
+ 
+# User effect (bu) 
+b_u <- train_set %>%  
+  left_join(b_i, by="movieId") %>% 
+  group_by(userId) %>% 
+  summarize(b_u = sum(rating - b_i - mu)/(n()+lambda)) 
+ 
+# Prediction 
+y_hat_reg <- test_set %>%  
+  left_join(b_i, by = "movieId") %>% 
+  left_join(b_u, by = "userId") %>% 
+  mutate(pred = mu + b_i + b_u) %>% 
+  pull(pred) 
+ 
+# Update the result table 
+result <- bind_rows(result,  
+                    tibble(Method = "Regularized bi and bu",  
+                           RMSE = RMSE(test_set$rating, y_hat_reg), 
+                           MSE  = MSE(test_set$rating, y_hat_reg), 
+                           MAE  = MAE(test_set$rating, y_hat_reg))) 
+
+# Display the improvement 
+result 
+```
+ 
+Shows training data in the matrix format 
+```{r train_matrix}
+train_data <- train_set %>%  
+  select(userId, movieId, rating) %>%  
+  spread(movieId, rating) %>%  
+  as.matrix() 
+```
+
+# Model creation
+Convert the train and test sets into recosystem input format
+```{r model}
+set.seed(123, sample.kind = "Rounding") # This is a randomized algorithm
+
+train_data <-  with(train_set, data_memory(user_index = userId,  
+                                           item_index = movieId,  
+                                           rating     = rating)) 
+test_data  <-  with(test_set,  data_memory(user_index = userId,  
+                                           item_index = movieId,  
+                                           rating     = rating)) 
+ 
+# Create the model object 
+r <-  recosystem::Reco() 
+ 
+# Select the best tuning parameters 
+opts <- r$tune(train_data, opts = list(dim = c(10, 20, 30),  
+                                       lrate = c(0.1, 0.2), 
+                                       costp_l2 = c(0.01, 0.1),  
+                                       costq_l2 = c(0.01, 0.1), 
+                                       nthread  = 4, niter = 10)) 
+```
+
+Train the algorithm and calculate the predicted values   
+```{r train_opt}
+r$train(train_data, opts = c(opts$min, nthread = 4, niter = 20)) 
+y_hat_reco <-  r$predict(test_data, out_memory()) 
+head(y_hat_reco, 10) 
+```
+
+# Result
+It makes a result table with the columns – Method, RMSE, MSE, MAE 
+```{r result_final}
+result <- bind_rows(result,  
+                    tibble(Method = "Matrix Factorization - recosystem",  
+                           RMSE = RMSE(test_set$rating, y_hat_reco), 
+                           MSE  = MSE(test_set$rating, y_hat_reco), 
+                           MAE  = MAE(test_set$rating, y_hat_reco))) 
+result 
+```
+
+# Movie Effect 
+Calculate user effect on prediction and subsequent RMSE improvement.
+```{r movie_effect}
+mu_edx <- mean(edx$rating) 
+ 
+# Movie effect (bi) 
+b_i_edx <- edx %>%  
+  group_by(movieId) %>% 
+  summarize(b_i = sum(rating - mu_edx)/(n()+lambda)) 
+ 
+# User effect (bu) 
+b_u_edx <- edx %>%  
+  left_join(b_i_edx, by="movieId") %>% 
+  group_by(userId) %>% 
+  summarize(b_u = sum(rating - b_i - mu_edx)/(n()+lambda)) 
+ 
+# Prediction 
+y_hat_edx <- validation %>%  
+  left_join(b_i_edx, by = "movieId") %>% 
+  left_join(b_u_edx, by = "userId") %>% 
+  mutate(pred = mu_edx + b_i + b_u) %>% 
+  pull(pred) 
+ 
+# Update the results table 
+result <- bind_rows(result,  
+                    tibble(Method = "Final Regularization (edx vs validation)",  
+                           RMSE = RMSE(validation$rating, y_hat_edx), 
+                           MSE  = MSE(validation$rating, y_hat_edx), 
+                           MAE  = MAE(validation$rating, y_hat_edx))) 
+ 
+# Show the RMSE improvement 
+result  
+```
+
+Then show the top 10 titles of the Validation set 
+```{r validation}
+validation %>%  
+  left_join(b_i_edx, by = "movieId") %>% 
+  left_join(b_u_edx, by = "userId") %>%  
+  mutate(pred = mu_edx + b_i + b_u) %>%  
+  arrange(-pred) %>%  
+  group_by(title) %>%  
+  select(title) %>% 
+  head(10) 
+
+```
+
+Join `validation` dataset with `b_i_edx`  
+```{r validation_joining}
+validation %>%  
+  left_join(b_i_edx, by = "movieId") %>% 
+  left_join(b_u_edx, by = "userId") %>%  
+  mutate(pred = mu_edx + b_i + b_u) %>%  
+  arrange(pred) %>%  
+  group_by(title) %>%  
+  select(title) %>% 
+  head(10) 
+```
+
+Convert `edx_reco` and `validation_reco` sets to recosystem input format 
+```{r recosystem}
+set.seed(1234, sample.kind = "Rounding") 
+ 
+edx_reco <-  with(edx, data_memory(user_index = userId,  
+                                   item_index = movieId,  
+                                   rating = rating)) 
+validation_reco  <-  with(validation, data_memory(user_index = userId,  
+                                                  item_index = movieId,  
+                                                  rating = rating)) 
+ 
+# Create the model object 
+r <-  recosystem::Reco() 
+ 
+# Tune the parameters 
+opts <-  r$tune(edx_reco, opts = list(dim = c(10, 20, 30),  
+                                     lrate = c(0.1, 0.2), 
+                                     costp_l2 = c(0.01, 0.1),  
+                                     costq_l2 = c(0.01, 0.1), 
+                                     nthread  = 4, niter = 10)) 
+``` 
+
+# Model Training
+Train the model. 
+```{r model_training}
+r$train(edx_reco, opts = c(opts$min, nthread = 4, niter = 20)) 
+
+# Calculate the prediction 
+y_hat_final_reco <-  r$predict(validation_reco, out_memory()) 
+ 
+# Update the result table 
+result <- bind_rows(result,  
+                    tibble(Method = "Final Matrix Factorization - recosystem",  
+                           RMSE = RMSE(validation$rating, y_hat_final_reco), 
+                           MSE  = MSE(validation$rating, y_hat_final_reco), 
+                           MAE  = MAE(validation$rating, y_hat_final_reco))) 
+
+# Show the RMSE improvement 
+result  
+```
+
+Top 10 movie titles from validation set 
+```{r validation_by_title}
+tibble(title = validation$title, rating = y_hat_final_reco) %>% 
+  arrange(-rating) %>%  
+  group_by(title) %>%  
+  select(title) %>% 
+  head(10) 
+```
+
+Create the final validation dataset.
+```{r validation_final}
+tibble(title = validation$title, rating = y_hat_final_reco) %>% 
+  arrange(rating) %>%  
+  group_by(title) %>%  
+  select(title) %>% 
+  head(10) 
+```
+
+#Conclusion
+We are able to predict the ratings of the Movielens dataset by training and testing our machine learning algorithm. By comparing the predicted ratings with the actual ratings, we can conclude that our predicted rating is quite close to the actual ratings though not exactly the same. Thus, our algorithm is successful in predicting the movie ratings.
